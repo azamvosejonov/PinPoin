@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   backend:
-    build: ./backend
+    build: .
     container_name: pinpoint-backend
     ports:
       - "8000:8000"
@@ -11,5 +11,6 @@ services:
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8000
     volumes:
-      - ./backend:/app
+      - .:/app
     restart: unless-stopped
+    entrypoint: /app/entrypoint.sh
