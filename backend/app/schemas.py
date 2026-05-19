@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from enum import Enum
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 
 
@@ -20,6 +21,37 @@ class Entrance(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class VerificationConfirm(BaseModel):
+    token: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class LogoutRequest(BaseModel):
+    token: str
 
 
 class BuildingBase(BaseModel):
@@ -186,3 +218,268 @@ class SyncResponse(BaseModel):
 class DomofonValidationRequest(BaseModel):
     code: str
     success: bool
+
+
+class UserRole(str, Enum):
+    admin = "admin"
+    restaurant_owner = "restaurant_owner"
+    restaurant_operator = "restaurant_operator"
+    courier = "courier"
+
+
+class UserBase(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: UserRole = UserRole.courier
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class UserRead(UserBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class RestaurantCourierCreate(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenPayload(BaseModel):
+    sub: Optional[str] = None
+    role: Optional[UserRole] = None
+
+
+class RestaurantBase(BaseModel):
+    name: str
+    contact_phone: Optional[str] = None
+    building_external_id: Optional[str] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    is_open: Optional[bool] = None
+    delivery_radius_km: Optional[float] = None
+    logo_url: Optional[str] = None
+
+
+class RestaurantCreate(RestaurantBase):
+    owner_id: Optional[int] = None
+
+
+class RestaurantUpdate(BaseModel):
+    name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    building_external_id: Optional[str] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    is_open: Optional[bool] = None
+    delivery_radius_km: Optional[float] = None
+    logo_url: Optional[str] = None
+
+
+class RestaurantRead(RestaurantBase):
+    id: int
+    owner_id: int
+    building_id: Optional[int]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaymentMethod(str, Enum):
+    cash = "CASH"
+    card = "CARD"
+    prepaid = "PREPAID"
+
+
+class OrderStatus(str, Enum):
+    pending = "PENDING"
+    accepted = "ACCEPTED"
+    picked_up = "PICKED_UP"
+    delivered = "DELIVERED"
+    canceled = "CANCELED"
+    delivery_failed = "DELIVERY_FAILED"
+    ready_for_pickup = "READY_FOR_PICKUP"
+    unassignable = "UNASSIGNABLE"
+    returned_to_restaurant = "RETURNED_TO_RESTAURANT"
+
+
+class OrderItem(BaseModel):
+    name: str
+    quantity: int = 1
+    price: Optional[float] = None
+
+
+class OrderCreate(BaseModel):
+    order_code: str
+    restaurant_id: int
+    dropoff_address: str
+    dropoff_latitude: float
+    dropoff_longitude: float
+    building_external_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    notes: Optional[str] = None
+    items: Optional[List[OrderItem]] = None
+    preparation_time_minutes: int = 15
+    total_amount: Optional[float] = None
+    payment_method: Optional[PaymentMethod] = PaymentMethod.cash
+
+
+class OrderTracking(BaseModel):
+    status: OrderStatus
+    courier_location: Optional["CourierLocationRead"] = None
+    restaurant_name: Optional[str] = None
+    delivery_distance_km: Optional[float] = None
+    delivery_fee: Optional[float] = None
+
+
+class OrderAssign(BaseModel):
+    courier_id: int
+
+
+class OrderBatchAssign(BaseModel):
+    order_ids: list[int]
+    courier_id: int
+
+
+class OrderStatusUpdate(BaseModel):
+    status: OrderStatus
+
+
+class OrderCancel(BaseModel):
+    reason: Optional[str] = None
+
+
+class OrderDeliveryFailed(BaseModel):
+    return_reason: str
+
+
+class OrderDecline(BaseModel):
+    reason: Optional[str] = None
+
+
+class CourierDailySummary(BaseModel):
+    date: str
+    total_orders: int
+    delivered_orders: int
+    canceled_orders: int
+    total_earnings: Optional[float] = None
+
+
+class OrderUpdate(BaseModel):
+    dropoff_address: Optional[str] = None
+    dropoff_latitude: Optional[float] = None
+    dropoff_longitude: Optional[float] = None
+    building_external_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    notes: Optional[str] = None
+    items: Optional[List[OrderItem]] = None
+
+
+class CourierLocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
+    bearing: Optional[float] = None
+    speed: Optional[float] = None
+
+
+class CourierLocationRead(BaseModel):
+    courier_id: int
+    latitude: float
+    longitude: float
+    bearing: Optional[float] = None
+    speed: Optional[float] = None
+    updated_at: datetime
+
+
+class CourierStatusEnum(str, Enum):
+    offline = "offline"
+    online = "online"
+    busy = "busy"
+    on_break = "on_break"
+
+
+class CourierStatusUpdate(BaseModel):
+    status: CourierStatusEnum
+
+
+class CourierCashCollect(BaseModel):
+    amount: float
+
+
+class CourierStatusRead(BaseModel):
+    courier_id: int
+    status: CourierStatusEnum
+    updated_at: datetime
+    last_online_at: Optional[datetime] = None
+    cash_balance: float
+
+
+class PaginatedOrders(BaseModel):
+    items: List["OrderRead"]
+    total: int
+    page: int
+    per_page: int
+
+
+class OrderRead(BaseModel):
+    id: int
+    order_code: str
+    tracking_hash: Optional[str]
+    status: OrderStatus
+    customer_name: Optional[str]
+    customer_phone: Optional[str]
+    notes: Optional[str]
+    items: Optional[List[OrderItem]]
+    dropoff_address: str
+    dropoff_latitude: float
+    dropoff_longitude: float
+    restaurant_id: int
+    building_id: Optional[int]
+    courier_id: Optional[int]
+    delivery_distance_km: Optional[float]
+    delivery_fee: Optional[float]
+    preparation_time_minutes: Optional[int]
+    ready_for_pickup_at: Optional[datetime]
+    is_urgent: bool
+    total_amount: Optional[float]
+    payment_method: Optional[PaymentMethod]
+    declined_courier_ids: Optional[str]
+    compensation_paid: bool
+    max_retries: int
+    retry_count: int
+    created_at: datetime
+    accepted_at: Optional[datetime]
+    picked_up_at: Optional[datetime]
+    delivered_at: Optional[datetime]
+    canceled_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
