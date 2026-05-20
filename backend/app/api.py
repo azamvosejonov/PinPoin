@@ -283,7 +283,13 @@ async def confirm_password_reset(payload: schemas.PasswordResetConfirm, db: Asyn
 async def create_restaurant_endpoint(
     payload: schemas.RestaurantCreate,
     db: AsyncSession = Depends(get_db),
-    _: schemas.UserRead = Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner)),
+    _: schemas.UserRead = Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+        )
+    ),
 ):
     restaurant = await services.create_restaurant(db, payload)
     return schemas.RestaurantRead.model_validate(restaurant)
@@ -292,7 +298,15 @@ async def create_restaurant_endpoint(
 @app.get("/restaurants", response_model=list[schemas.RestaurantRead])
 async def list_restaurants_endpoint(
     db: AsyncSession = Depends(get_db),
-    _: schemas.UserRead = Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator, schemas.UserRole.courier)),
+    _: schemas.UserRead = Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.courier,
+        )
+    ),
 ):
     restaurants = await services.list_restaurants(db)
     return [schemas.RestaurantRead.model_validate(r) for r in restaurants]
@@ -326,9 +340,12 @@ async def update_restaurant_endpoint(
 
 
 def ensure_restaurant_access(restaurant: models.Restaurant, current_user) -> None:
-    if schemas.UserRole(current_user.role) == schemas.UserRole.admin:
+    if schemas.UserRole(current_user.role) in (schemas.UserRole.admin, schemas.UserRole.merchant_admin):
         return
-    if schemas.UserRole(current_user.role) not in (schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator) or restaurant.owner_id != current_user.id:
+    if schemas.UserRole(current_user.role) not in (
+        schemas.UserRole.restaurant_owner,
+        schemas.UserRole.restaurant_operator,
+    ) or restaurant.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
@@ -380,7 +397,14 @@ async def remove_restaurant_courier(
 async def create_order_endpoint(
     payload: schemas.OrderCreate,
     db: AsyncSession = Depends(get_db),
-    _: schemas.UserRead = Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _: schemas.UserRead = Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+        )
+    ),
 ):
     order = await services.create_order(db, payload)
     return schemas.OrderRead.model_validate(order)
@@ -391,7 +415,15 @@ async def assign_order_endpoint(
     order_id: int,
     payload: schemas.OrderAssign,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     order = await services.assign_order(db, order_id, payload.courier_id)
     await services.log_order_status_change(db, order_id, schemas.OrderStatus.pending.value, schemas.OrderStatus.accepted.value, current_user.id)
@@ -446,7 +478,15 @@ async def update_order_status_endpoint(
 async def unassign_order_endpoint(
     order_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     order = await services.unassign_order(db, order_id, current_user.id)
     return schemas.OrderRead.model_validate(order)
@@ -547,7 +587,7 @@ async def search_orders(
     restaurant_id: Optional[int] = None,
     courier_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(schemas.UserRole.admin)),
+    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.support_operator)),
 ):
     items, total = await services.list_orders_paginated(db, page, per_page, status_filter, restaurant_id, courier_id)
     return schemas.PaginatedOrders(
@@ -584,7 +624,15 @@ async def get_order_endpoint(
 async def list_orders_for_restaurant_endpoint(
     restaurant_id: int,
     db: AsyncSession = Depends(get_db),
-    _: schemas.UserRead = Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _: schemas.UserRead = Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     orders = await services.list_orders_for_restaurant(db, restaurant_id)
     return [schemas.OrderRead.model_validate(o) for o in orders]
@@ -594,7 +642,14 @@ async def list_orders_for_restaurant_endpoint(
 async def list_orders_for_courier_endpoint(
     courier_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.courier)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.courier,
+            schemas.UserRole.fleet_manager,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     if schemas.UserRole(current_user.role) == schemas.UserRole.courier and current_user.id != courier_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot view other courier orders")
@@ -607,7 +662,15 @@ async def cancel_order_endpoint(
     order_id: int,
     payload: schemas.OrderCancel,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     order = await services.cancel_order(db, order_id, payload.reason)
     await services.log_order_status_change(db, order_id, order.status, schemas.OrderStatus.canceled.value, current_user.id)
@@ -636,7 +699,17 @@ async def update_my_location(
 async def get_courier_location_endpoint(
     courier_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator, schemas.UserRole.courier)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.courier,
+            schemas.UserRole.fleet_manager,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     loc = await services.get_courier_location(db, courier_id)
     if not loc:
@@ -673,7 +746,7 @@ async def collect_cash_from_courier_endpoint(
     courier_id: int,
     payload: schemas.CourierCashCollect,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner)),
+    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.fleet_manager)),
 ):
     cs = await services.collect_cash_from_courier(db, courier_id, payload.amount)
     return schemas.CourierStatusRead(
@@ -690,7 +763,17 @@ async def collect_cash_from_courier_endpoint(
 async def get_courier_status_endpoint(
     courier_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator, schemas.UserRole.courier)),
+    current_user=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.courier,
+            schemas.UserRole.fleet_manager,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     cs = await services.get_courier_status(db, courier_id)
     if not cs:
@@ -723,7 +806,15 @@ async def public_tracking_endpoint(
 async def smart_dispatch_endpoint(
     payload: schemas.SmartDispatchRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     return await services.smart_dispatch(db, payload)
 
@@ -751,7 +842,15 @@ async def correct_pin_endpoint(
 async def auto_batch_endpoint(
     payload: schemas.AutoBatchRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     return await services.auto_batch_orders(db, payload)
 
@@ -764,7 +863,16 @@ async def auto_batch_endpoint(
 async def dashboard_metrics_endpoint(
     restaurant_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.fleet_manager,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     return await services.get_dashboard_metrics(db, restaurant_id)
 
@@ -772,7 +880,16 @@ async def dashboard_metrics_endpoint(
 @app.get("/dashboard/heatmap", response_model=schemas.LiveHeatmapResponse)
 async def live_heatmap_endpoint(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+    _=Depends(
+        require_role(
+            schemas.UserRole.admin,
+            schemas.UserRole.merchant_admin,
+            schemas.UserRole.restaurant_owner,
+            schemas.UserRole.restaurant_operator,
+            schemas.UserRole.fleet_manager,
+            schemas.UserRole.support_operator,
+        )
+    ),
 ):
     return await services.get_live_heatmap(db)
 

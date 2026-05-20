@@ -222,8 +222,11 @@ class DomofonValidationRequest(BaseModel):
 
 class UserRole(str, Enum):
     admin = "admin"
+    merchant_admin = "merchant_admin"
     restaurant_owner = "restaurant_owner"
     restaurant_operator = "restaurant_operator"
+    fleet_manager = "fleet_manager"
+    support_operator = "support_operator"
     courier = "courier"
 
 
