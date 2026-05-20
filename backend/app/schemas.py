@@ -332,6 +332,12 @@ class OrderStatus(str, Enum):
     returned_to_restaurant = "RETURNED_TO_RESTAURANT"
 
 
+class PackagingType(str, Enum):
+    standard = "standard"
+    thermal_bag = "thermal_bag"
+    insulated_box = "insulated_box"
+
+
 class OrderItem(BaseModel):
     name: str
     quantity: int = 1
@@ -435,12 +441,6 @@ class TransportMode(str, Enum):
     pedestrian = "pedestrian"
     bicycle = "bicycle"
     car = "car"
-
-
-class PackagingType(str, Enum):
-    standard = "standard"
-    thermal_bag = "thermal_bag"
-    insulated_box = "insulated_box"
 
 
 class CourierStatusUpdate(BaseModel):

@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from app.database import async_session
+from app.database import SessionLocal
 from app import services, schemas
 
 
@@ -14,7 +14,7 @@ async def main() -> None:
         print("[bootstrap] ADMIN_EMAIL or ADMIN_PASSWORD not set; skipping admin creation")
         return
 
-    async with async_session() as db:
+    async with SessionLocal() as db:
         existing = await services.get_user_by_email(db, email.lower())
         if existing:
             print(f"[bootstrap] Admin user already exists: {existing.email}")
