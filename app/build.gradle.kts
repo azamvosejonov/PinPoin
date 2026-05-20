@@ -17,7 +17,7 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "BACKEND_BASE_URL", "\"http://10.0.2.2:8000/\"")
+        buildConfigField("String", "BACKEND_BASE_URL", "\"http://213.199.45.16:8000/\"")
     }
 
     buildTypes {
@@ -42,6 +42,7 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -109,6 +110,13 @@ dependencies {
 
     // DataStore Preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // Android Security for encrypted storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // QR Code Scanner
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.2")
 
     // WorkManager (Background tasks)
     implementation("androidx.work:work-runtime-ktx:2.9.0")

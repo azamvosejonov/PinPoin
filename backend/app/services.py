@@ -726,6 +726,8 @@ async def create_order(db: AsyncSession, payload: schemas.OrderCreate) -> models
         preparation_time_minutes=payload.preparation_time_minutes,
         total_amount=payload.total_amount,
         payment_method=payload.payment_method.value if payload.payment_method else None,
+        initial_food_temp=payload.initial_food_temp,
+        packaging_type=payload.packaging_type.value if payload.packaging_type else None,
     )
     db.add(order)
     await db.commit()
@@ -1467,24 +1469,27 @@ async def update_courier_status(db: AsyncSession, courier_id: int, payload: sche
             )
     
     result = await db.execute(select(models.CourierStatus).where(models.CourierStatus.courier_id == courier_id))
-    status = result.scalar_one_or_none()
+    cs = result.scalar_one_or_none()
     now = datetime.utcnow()
-    if status:
-        status.status = payload.status.value
-        status.updated_at = now
+    if cs:
+        cs.status = payload.status.value
+        cs.updated_at = now
+        if payload.transport_mode:
+            cs.transport_mode = payload.transport_mode.value
         if payload.status.value == schemas.CourierStatusEnum.online.value:
-            status.last_online_at = now
+            cs.last_online_at = now
     else:
-        status = models.CourierStatus(
+        cs = models.CourierStatus(
             courier_id=courier_id,
             status=payload.status.value,
+            transport_mode=payload.transport_mode.value if payload.transport_mode else "pedestrian",
             updated_at=now,
             last_online_at=now if payload.status.value == schemas.CourierStatusEnum.online.value else None,
         )
-        db.add(status)
+        db.add(cs)
     await db.commit()
-    await db.refresh(status)
-    return status
+    await db.refresh(cs)
+    return cs
 
 
 async def get_order_by_tracking_hash(db: AsyncSession, tracking_hash: str) -> models.Order | None:
@@ -1524,3 +1529,503 @@ async def get_order_tracking_data(db: AsyncSession, tracking_hash: str) -> schem
         delivery_distance_km=order.delivery_distance_km,
         delivery_fee=order.delivery_fee,
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# SMART DISPATCH ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+TRANSPORT_SPEED_KMH = {
+    "pedestrian": 5.0,
+    "bicycle": 15.0,
+    "car": 35.0,
+}
+
+PACKAGING_K_COEFFICIENT = {
+    "standard": 0.08,
+    "thermal_bag": 0.03,
+    "insulated_box": 0.015,
+}
+
+
+def _estimate_travel_minutes(distance_km: float, transport_mode: str) -> float:
+    speed = TRANSPORT_SPEED_KMH.get(transport_mode, 5.0)
+    return (distance_km / speed) * 60
+
+
+def compute_thermal_decay(
+    initial_temp: float,
+    ambient_temp: float,
+    packaging_type: str,
+    travel_minutes: float,
+) -> tuple[float, str]:
+    k = PACKAGING_K_COEFFICIENT.get(packaging_type, 0.08)
+    predicted = ambient_temp + (initial_temp - ambient_temp) * math.exp(-k * travel_minutes)
+    if predicted >= 60:
+        risk = "LOW"
+    elif predicted >= 45:
+        risk = "MEDIUM"
+    else:
+        risk = "HIGH"
+    return round(predicted, 1), risk
+
+
+async def smart_dispatch(
+    db: AsyncSession,
+    payload: schemas.SmartDispatchRequest,
+) -> schemas.SmartDispatchResponse:
+    order = await get_order_by_id(db, payload.order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status not in (schemas.OrderStatus.pending.value, schemas.OrderStatus.ready_for_pickup.value):
+        raise HTTPException(status_code=400, detail="Order must be PENDING or READY_FOR_PICKUP")
+    if order.courier_id is not None:
+        return schemas.SmartDispatchResponse(
+            order_id=order.id,
+            assigned_courier_id=order.courier_id,
+            message="already_assigned",
+        )
+
+    restaurant = await get_restaurant_by_id(db, order.restaurant_id)
+    if not restaurant or not restaurant.building:
+        raise HTTPException(status_code=400, detail="Restaurant has no building for distance calculation")
+
+    rest_lat = restaurant.building.latitude
+    rest_lon = restaurant.building.longitude
+
+    result = await db.execute(
+        select(models.User)
+        .options(selectinload(models.User.courier_status))
+        .where(
+            models.User.role == schemas.UserRole.courier.value,
+            models.User.is_active == True,
+        )
+    )
+    couriers = result.scalars().all()
+
+    declined_ids = set()
+    if order.declined_courier_ids:
+        declined_ids = {int(c) for c in order.declined_courier_ids.split(",") if c}
+
+    now = datetime.utcnow()
+    candidates = []
+
+    for courier in couriers:
+        if courier.id in declined_ids:
+            continue
+        cs = courier.courier_status
+        if not cs or cs.status not in (schemas.CourierStatusEnum.online.value, schemas.CourierStatusEnum.busy.value):
+            continue
+        if payload.prefer_transport and cs.transport_mode != payload.prefer_transport.value:
+            continue
+
+        loc = await get_courier_location(db, courier.id)
+        if not loc or (now - loc.updated_at).total_seconds() > 300:
+            continue
+
+        distance_to_restaurant = _haversine_km(loc.latitude, loc.longitude, rest_lat, rest_lon)
+        if distance_to_restaurant > payload.max_radius_km:
+            continue
+
+        distance_to_customer = _haversine_km(rest_lat, rest_lon, order.dropoff_latitude, order.dropoff_longitude)
+        transport = cs.transport_mode or "pedestrian"
+        pickup_minutes = _estimate_travel_minutes(distance_to_restaurant, transport)
+        delivery_minutes = _estimate_travel_minutes(distance_to_customer, transport)
+
+        prep_time = order.preparation_time_minutes or 15
+        wait_at_restaurant = max(0, prep_time - pickup_minutes)
+        total_time = pickup_minutes + wait_at_restaurant + delivery_minutes
+
+        predicted_temp = None
+        thermal_risk = None
+        if order.initial_food_temp:
+            packaging = order.packaging_type or "standard"
+            ambient = 20.0
+            predicted_temp, thermal_risk = compute_thermal_decay(
+                order.initial_food_temp, ambient, packaging, delivery_minutes
+            )
+
+        score = total_time
+        if thermal_risk == "HIGH":
+            score += 30
+        elif thermal_risk == "MEDIUM":
+            score += 10
+        if cs.status == schemas.CourierStatusEnum.busy.value:
+            score += 15
+
+        candidates.append({
+            "courier": courier,
+            "transport": transport,
+            "pickup_min": round(pickup_minutes),
+            "delivery_min": round(total_time),
+            "predicted_temp": predicted_temp,
+            "thermal_risk": thermal_risk,
+            "score": score,
+        })
+
+    if not candidates:
+        return schemas.SmartDispatchResponse(
+            order_id=order.id,
+            message="no_couriers_available",
+        )
+
+    candidates.sort(key=lambda c: c["score"])
+    best = candidates[0]
+    courier_obj = best["courier"]
+
+    try:
+        await assign_order(db, order.id, courier_obj.id)
+    except HTTPException:
+        return schemas.SmartDispatchResponse(
+            order_id=order.id,
+            message="assignment_failed",
+        )
+
+    if best["predicted_temp"] is not None:
+        order_result = await db.execute(select(models.Order).where(models.Order.id == order.id))
+        order_db = order_result.scalar_one_or_none()
+        if order_db:
+            order_db.predicted_arrival_temp = best["predicted_temp"]
+            order_db.thermal_risk_level = best["thermal_risk"]
+            await db.commit()
+
+    return schemas.SmartDispatchResponse(
+        order_id=order.id,
+        assigned_courier_id=courier_obj.id,
+        courier_name=courier_obj.full_name,
+        transport_mode=best["transport"],
+        estimated_pickup_minutes=best["pickup_min"],
+        estimated_delivery_minutes=best["delivery_min"],
+        predicted_food_temp=best["predicted_temp"],
+        thermal_risk=best["thermal_risk"],
+        message="ok",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# PIN AUTO-CORRECTION
+# ═══════════════════════════════════════════════════════════════
+
+async def auto_correct_pin(
+    db: AsyncSession,
+    payload: schemas.PinCorrectionRequest,
+) -> schemas.PinCorrectionResponse:
+    order = await get_order_by_id(db, payload.order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    corrected_lat = payload.gps_latitude
+    corrected_lon = payload.gps_longitude
+    source = "unchanged"
+    confidence = 1.0
+
+    if order.building_id:
+        cluster_result = await db.execute(
+            select(models.SuccessfulDeliveryCluster)
+            .where(models.SuccessfulDeliveryCluster.building_id == order.building_id)
+            .order_by(models.SuccessfulDeliveryCluster.delivery_count.desc())
+            .limit(5)
+        )
+        clusters = cluster_result.scalars().all()
+
+        if clusters:
+            best_cluster = None
+            best_dist = float("inf")
+            for cluster in clusters:
+                dist = _haversine_km(
+                    payload.gps_latitude, payload.gps_longitude,
+                    cluster.latitude, cluster.longitude,
+                ) * 1000
+                if dist < best_dist:
+                    best_dist = dist
+                    best_cluster = cluster
+
+            if best_cluster and best_dist > 50:
+                corrected_lat = best_cluster.latitude
+                corrected_lon = best_cluster.longitude
+                source = "historical_cluster"
+                confidence = min(1.0, best_cluster.delivery_count / 10.0)
+
+    if source == "unchanged":
+        geocoded = _geocode_address_heuristic(payload.text_address, payload.gps_latitude, payload.gps_longitude)
+        if geocoded:
+            gc_lat, gc_lon = geocoded
+            gc_dist = _haversine_km(payload.gps_latitude, payload.gps_longitude, gc_lat, gc_lon) * 1000
+            if gc_dist > 50:
+                corrected_lat = gc_lat
+                corrected_lon = gc_lon
+                source = "geocoding"
+                confidence = 0.7
+
+    correction_distance = _haversine_km(
+        payload.gps_latitude, payload.gps_longitude,
+        corrected_lat, corrected_lon,
+    ) * 1000
+
+    if source != "unchanged":
+        order_result = await db.execute(select(models.Order).where(models.Order.id == order.id))
+        order_db = order_result.scalar_one_or_none()
+        if order_db:
+            order_db.corrected_latitude = corrected_lat
+            order_db.corrected_longitude = corrected_lon
+            order_db.pin_correction_reason = source
+            await db.commit()
+
+    return schemas.PinCorrectionResponse(
+        original_latitude=payload.gps_latitude,
+        original_longitude=payload.gps_longitude,
+        corrected_latitude=corrected_lat,
+        corrected_longitude=corrected_lon,
+        correction_distance_meters=round(correction_distance, 1),
+        source=source,
+        confidence=round(confidence, 2),
+    )
+
+
+def _geocode_address_heuristic(
+    text_address: str,
+    ref_lat: float,
+    ref_lon: float,
+) -> tuple[float, float] | None:
+    import re
+    parts = re.findall(r"\d+", text_address)
+    if len(parts) >= 2:
+        house_num = int(parts[0])
+        entrance_num = int(parts[1]) if len(parts) > 1 else 1
+        offset_lat = (house_num * 0.00003) + (entrance_num * 0.00001)
+        offset_lon = (house_num * 0.00002) - (entrance_num * 0.00001)
+        return ref_lat + offset_lat, ref_lon + offset_lon
+    return None
+
+
+async def record_successful_delivery_cluster(
+    db: AsyncSession,
+    order: models.Order,
+) -> None:
+    if not order.building_id:
+        return
+    lat = order.corrected_latitude or order.dropoff_latitude
+    lon = order.corrected_longitude or order.dropoff_longitude
+
+    result = await db.execute(
+        select(models.SuccessfulDeliveryCluster).where(
+            models.SuccessfulDeliveryCluster.building_id == order.building_id,
+        )
+    )
+    clusters = result.scalars().all()
+    for cluster in clusters:
+        dist = _haversine_km(lat, lon, cluster.latitude, cluster.longitude) * 1000
+        if dist < 20:
+            cluster.delivery_count += 1
+            cluster.last_delivered_at = datetime.utcnow()
+            cluster.latitude = (cluster.latitude * (cluster.delivery_count - 1) + lat) / cluster.delivery_count
+            cluster.longitude = (cluster.longitude * (cluster.delivery_count - 1) + lon) / cluster.delivery_count
+            await db.commit()
+            return
+
+    db.add(models.SuccessfulDeliveryCluster(
+        building_id=order.building_id,
+        latitude=lat,
+        longitude=lon,
+    ))
+    await db.commit()
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTO-BATCHING
+# ═══════════════════════════════════════════════════════════════
+
+async def auto_batch_orders(
+    db: AsyncSession,
+    payload: schemas.AutoBatchRequest,
+) -> schemas.AutoBatchResponse:
+    result = await db.execute(
+        select(models.Order)
+        .where(
+            models.Order.restaurant_id == payload.restaurant_id,
+            models.Order.status.in_([
+                schemas.OrderStatus.pending.value,
+                schemas.OrderStatus.ready_for_pickup.value,
+            ]),
+            models.Order.courier_id == None,
+        )
+        .order_by(models.Order.created_at)
+    )
+    pending_orders = list(result.scalars().all())
+
+    if len(pending_orders) < 2:
+        return schemas.AutoBatchResponse(
+            batches=[],
+            unbatched_order_ids=[o.id for o in pending_orders],
+        )
+
+    restaurant = await get_restaurant_by_id(db, payload.restaurant_id)
+    rest_lat = restaurant.building.latitude if restaurant and restaurant.building else 0
+    rest_lon = restaurant.building.longitude if restaurant and restaurant.building else 0
+
+    used = set()
+    batches = []
+
+    for i, order_a in enumerate(pending_orders):
+        if order_a.id in used:
+            continue
+        group = [order_a]
+        used.add(order_a.id)
+
+        for j, order_b in enumerate(pending_orders):
+            if order_b.id in used or len(group) >= payload.max_batch_size:
+                break
+            detour = _haversine_km(
+                order_a.dropoff_latitude, order_a.dropoff_longitude,
+                order_b.dropoff_latitude, order_b.dropoff_longitude,
+            )
+            if detour <= payload.max_detour_km:
+                group.append(order_b)
+                used.add(order_b.id)
+
+        if len(group) >= 2:
+            total_dist = sum(
+                _haversine_km(rest_lat, rest_lon, o.dropoff_latitude, o.dropoff_longitude)
+                for o in group
+            )
+            est_time = round(_estimate_travel_minutes(total_dist / len(group), "car") * 1.3)
+
+            predicted_temp = None
+            if group[0].initial_food_temp:
+                packaging = group[0].packaging_type or "standard"
+                predicted_temp, _ = compute_thermal_decay(
+                    group[0].initial_food_temp, 20.0, packaging, est_time,
+                )
+
+            batches.append(schemas.BatchedGroup(
+                order_ids=[o.id for o in group],
+                total_distance_km=round(total_dist, 2),
+                estimated_time_minutes=est_time,
+                predicted_final_temp=predicted_temp,
+            ))
+
+    unbatched = [o.id for o in pending_orders if o.id not in used]
+
+    return schemas.AutoBatchResponse(batches=batches, unbatched_order_ids=unbatched)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD METRICS
+# ═══════════════════════════════════════════════════════════════
+
+async def get_dashboard_metrics(db: AsyncSession, restaurant_id: int | None = None) -> schemas.DashboardMetrics:
+    now = datetime.utcnow()
+    start_of_day = datetime(now.year, now.month, now.day)
+
+    order_query = select(models.Order).where(models.Order.created_at >= start_of_day)
+    if restaurant_id:
+        order_query = order_query.where(models.Order.restaurant_id == restaurant_id)
+    result = await db.execute(order_query)
+    orders = result.scalars().all()
+
+    total = len(orders)
+    delivered = [o for o in orders if o.status == schemas.OrderStatus.delivered.value]
+    delivered_count = len(delivered)
+
+    avg_time = None
+    if delivered:
+        times = []
+        for o in delivered:
+            if o.delivered_at and o.created_at:
+                delta = (o.delivered_at - o.created_at).total_seconds() / 60
+                times.append(delta)
+        if times:
+            avg_time = round(sum(times) / len(times), 1)
+
+    metric_result = await db.execute(
+        select(models.DeliveryMetric).where(models.DeliveryMetric.created_at >= start_of_day)
+    )
+    metrics = metric_result.scalars().all()
+    indoor_delays = [m.indoor_delay_seconds for m in metrics if m.indoor_delay_seconds]
+    avg_indoor = round(sum(indoor_delays) / len(indoor_delays), 1) if indoor_delays else None
+
+    active_result = await db.execute(
+        select(func.count(models.CourierStatus.id)).where(
+            models.CourierStatus.status.in_(["online", "busy"])
+        )
+    )
+    active_couriers = active_result.scalar() or 0
+
+    revenue = sum(o.total_amount for o in delivered if o.total_amount) or None
+
+    return schemas.DashboardMetrics(
+        total_orders_today=total,
+        delivered_today=delivered_count,
+        avg_delivery_time_minutes=avg_time,
+        avg_indoor_delay_seconds=avg_indoor,
+        active_couriers=active_couriers,
+        total_revenue_today=revenue,
+    )
+
+
+async def get_live_heatmap(db: AsyncSession) -> schemas.LiveHeatmapResponse:
+    result = await db.execute(
+        select(models.CourierLocation)
+        .options(selectinload(models.CourierLocation.courier))
+    )
+    locations = result.scalars().all()
+
+    points = []
+    for loc in locations:
+        cs = await get_courier_status(db, loc.courier_id)
+        if cs and cs.status in ("online", "busy"):
+            active_orders = await db.execute(
+                select(models.Order).where(
+                    models.Order.courier_id == loc.courier_id,
+                    models.Order.status == schemas.OrderStatus.picked_up.value,
+                ).limit(1)
+            )
+            active_order = active_orders.scalar_one_or_none()
+            food_temp = None
+            if active_order and active_order.initial_food_temp and active_order.picked_up_at:
+                elapsed = (datetime.utcnow() - active_order.picked_up_at).total_seconds() / 60
+                packaging = active_order.packaging_type or "standard"
+                food_temp, _ = compute_thermal_decay(
+                    active_order.initial_food_temp, 20.0, packaging, elapsed,
+                )
+
+            points.append(schemas.CourierHeatmapPoint(
+                courier_id=loc.courier_id,
+                courier_name=loc.courier.full_name if loc.courier else None,
+                latitude=loc.latitude,
+                longitude=loc.longitude,
+                current_food_temp=food_temp,
+                status=cs.status,
+                transport_mode=cs.transport_mode,
+            ))
+
+    return schemas.LiveHeatmapResponse(couriers=points, timestamp=datetime.utcnow())
+
+
+async def record_delivery_metric(db: AsyncSession, order: models.Order) -> None:
+    total_seconds = None
+    indoor_seconds = None
+    outdoor_seconds = None
+
+    if order.delivered_at and order.created_at:
+        total_seconds = int((order.delivered_at - order.created_at).total_seconds())
+    if order.indoor_entered_at and order.indoor_exited_at:
+        indoor_seconds = int((order.indoor_exited_at - order.indoor_entered_at).total_seconds())
+    if total_seconds and indoor_seconds:
+        outdoor_seconds = total_seconds - indoor_seconds
+
+    cs = await get_courier_status(db, order.courier_id) if order.courier_id else None
+
+    metric = models.DeliveryMetric(
+        order_id=order.id,
+        courier_id=order.courier_id,
+        restaurant_id=order.restaurant_id,
+        total_delivery_seconds=total_seconds,
+        indoor_delay_seconds=indoor_seconds,
+        outdoor_travel_seconds=outdoor_seconds,
+        distance_km=order.delivery_distance_km,
+        final_food_temp=order.predicted_arrival_temp,
+        transport_mode=cs.transport_mode if cs else None,
+    )
+    db.add(metric)
+    await db.commit()

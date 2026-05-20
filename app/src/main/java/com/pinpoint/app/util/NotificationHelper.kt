@@ -33,7 +33,7 @@ object NotificationHelper {
 
     fun buildTrackingNotification(context: Context): Notification {
         return NotificationCompat.Builder(context, CHANNEL_LOCATION)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle(context.getString(R.string.notification_tracking_title))
             .setContentText(context.getString(R.string.notification_tracking_text))
             .setOngoing(true)
@@ -43,7 +43,7 @@ object NotificationHelper {
 
     fun buildAlertNotification(context: Context, title: String, message: String): Notification {
         return NotificationCompat.Builder(context, CHANNEL_ALERT)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

@@ -349,6 +349,8 @@ class OrderCreate(BaseModel):
     preparation_time_minutes: int = 15
     total_amount: Optional[float] = None
     payment_method: Optional[PaymentMethod] = PaymentMethod.cash
+    initial_food_temp: Optional[float] = None
+    packaging_type: Optional[PackagingType] = PackagingType.standard
 
 
 class OrderTracking(BaseModel):
@@ -426,8 +428,21 @@ class CourierStatusEnum(str, Enum):
     on_break = "on_break"
 
 
+class TransportMode(str, Enum):
+    pedestrian = "pedestrian"
+    bicycle = "bicycle"
+    car = "car"
+
+
+class PackagingType(str, Enum):
+    standard = "standard"
+    thermal_bag = "thermal_bag"
+    insulated_box = "insulated_box"
+
+
 class CourierStatusUpdate(BaseModel):
     status: CourierStatusEnum
+    transport_mode: Optional[TransportMode] = None
 
 
 class CourierCashCollect(BaseModel):
@@ -437,6 +452,7 @@ class CourierCashCollect(BaseModel):
 class CourierStatusRead(BaseModel):
     courier_id: int
     status: CourierStatusEnum
+    transport_mode: Optional[str] = "pedestrian"
     updated_at: datetime
     last_online_at: Optional[datetime] = None
     cash_balance: float
@@ -475,6 +491,13 @@ class OrderRead(BaseModel):
     compensation_paid: bool
     max_retries: int
     retry_count: int
+    initial_food_temp: Optional[float] = None
+    packaging_type: Optional[str] = None
+    predicted_arrival_temp: Optional[float] = None
+    thermal_risk_level: Optional[str] = None
+    corrected_latitude: Optional[float] = None
+    corrected_longitude: Optional[float] = None
+    pin_correction_reason: Optional[str] = None
     created_at: datetime
     accepted_at: Optional[datetime]
     picked_up_at: Optional[datetime]
@@ -483,3 +506,128 @@ class OrderRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Smart Dispatch ──
+
+class SmartDispatchRequest(BaseModel):
+    order_id: int
+    max_radius_km: float = 5.0
+    prefer_transport: Optional[TransportMode] = None
+
+
+class SmartDispatchResponse(BaseModel):
+    order_id: int
+    assigned_courier_id: Optional[int] = None
+    courier_name: Optional[str] = None
+    transport_mode: Optional[str] = None
+    estimated_pickup_minutes: Optional[int] = None
+    estimated_delivery_minutes: Optional[int] = None
+    predicted_food_temp: Optional[float] = None
+    thermal_risk: Optional[str] = None
+    message: str = "ok"
+
+
+# ── Pin Auto-Correction ──
+
+class PinCorrectionRequest(BaseModel):
+    order_id: int
+    text_address: str
+    gps_latitude: float
+    gps_longitude: float
+
+
+class PinCorrectionResponse(BaseModel):
+    original_latitude: float
+    original_longitude: float
+    corrected_latitude: float
+    corrected_longitude: float
+    correction_distance_meters: float
+    source: str  # "geocoding", "historical_cluster", "unchanged"
+    confidence: float
+
+
+# ── Auto-Batching ──
+
+class AutoBatchRequest(BaseModel):
+    restaurant_id: int
+    max_batch_size: int = 2
+    max_detour_km: float = 1.5
+
+
+class BatchedGroup(BaseModel):
+    order_ids: list[int]
+    total_distance_km: float
+    estimated_time_minutes: int
+    predicted_final_temp: Optional[float] = None
+
+
+class AutoBatchResponse(BaseModel):
+    batches: list[BatchedGroup]
+    unbatched_order_ids: list[int]
+
+
+# ── Dashboard Metrics ──
+
+class DashboardMetrics(BaseModel):
+    total_orders_today: int
+    delivered_today: int
+    avg_delivery_time_minutes: Optional[float] = None
+    avg_indoor_delay_seconds: Optional[float] = None
+    active_couriers: int
+    total_revenue_today: Optional[float] = None
+
+
+class CourierHeatmapPoint(BaseModel):
+    courier_id: int
+    courier_name: Optional[str] = None
+    latitude: float
+    longitude: float
+    current_food_temp: Optional[float] = None
+    status: str
+    transport_mode: Optional[str] = None
+
+
+class LiveHeatmapResponse(BaseModel):
+    couriers: list[CourierHeatmapPoint]
+    timestamp: datetime
+
+
+class DeliveryMetricRead(BaseModel):
+    id: int
+    order_id: int
+    courier_id: int
+    restaurant_id: int
+    total_delivery_seconds: Optional[int] = None
+    indoor_delay_seconds: Optional[int] = None
+    outdoor_travel_seconds: Optional[int] = None
+    distance_km: Optional[float] = None
+    final_food_temp: Optional[float] = None
+    courier_rating: Optional[float] = None
+    transport_mode: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── WebSocket Events ──
+
+class WSCourierLocationEvent(BaseModel):
+    event: str = "courier_location"
+    courier_id: int
+    latitude: float
+    longitude: float
+    bearing: Optional[float] = None
+    speed: Optional[float] = None
+    current_food_temp: Optional[float] = None
+    timestamp: datetime
+
+
+class WSOrderStatusEvent(BaseModel):
+    event: str = "order_status"
+    order_id: int
+    order_code: str
+    old_status: str
+    new_status: str
+    timestamp: datetime

@@ -1,0 +1,38 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.pinpoint.app-mergeDebugResources-81:/values-v16/values-v16.xml",
+            "map": [
+                {
+                    "source": "/home/azam/.gradle/caches/transforms-3/f6b3349d1c28cba92b8d68e62c1f27d8/transformed/appcompat-1.6.1/res/values-v16/values-v16.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endLines": "5",
+                        "endColumns": "12",
+                        "endOffsets": "223"
+                    },
+                    "to": {
+                        "startLines": "3",
+                        "startColumns": "4",
+                        "startOffsets": "121",
+                        "endLines": "6",
+                        "endColumns": "12",
+                        "endOffsets": "289"
+                    }
+                },
+                {
+                    "source": "/home/azam/.gradle/caches/transforms-3/f298b0601fed12d6bacb9e8926e151d6/transformed/core-1.12.0/res/values-v16/values-v16.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "65",
+                        "endOffsets": "116"
+                    }
+                }
+            ]
+        }
+    ]
+}

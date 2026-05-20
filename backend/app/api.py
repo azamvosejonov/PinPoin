@@ -6,11 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app import schemas, services, models
 from app.database import get_db
 from app.config import get_settings
 
-app = FastAPI(title="PinPoInt Backend", version="1.0.0")
+app = FastAPI(title="PinPoInt Backend", version="2.0.0")
 settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 limiter = Limiter(key_func=get_remote_address)
@@ -27,7 +28,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "2.0.0"}
 
 
 @app.post("/predictive-pin", response_model=schemas.PredictivePinResponse)
@@ -656,13 +657,14 @@ async def update_courier_status_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(schemas.UserRole.courier)),
 ):
-    status = await services.update_courier_status(db, current_user.id, payload)
+    cs = await services.update_courier_status(db, current_user.id, payload)
     return schemas.CourierStatusRead(
-        courier_id=status.courier_id,
-        status=schemas.CourierStatusEnum(status.status),
-        updated_at=status.updated_at,
-        last_online_at=status.last_online_at,
-        cash_balance=status.cash_balance,
+        courier_id=cs.courier_id,
+        status=schemas.CourierStatusEnum(cs.status),
+        transport_mode=cs.transport_mode,
+        updated_at=cs.updated_at,
+        last_online_at=cs.last_online_at,
+        cash_balance=cs.cash_balance,
     )
 
 
@@ -673,13 +675,14 @@ async def collect_cash_from_courier_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner)),
 ):
-    status = await services.collect_cash_from_courier(db, courier_id, payload.amount)
+    cs = await services.collect_cash_from_courier(db, courier_id, payload.amount)
     return schemas.CourierStatusRead(
-        courier_id=status.courier_id,
-        status=schemas.CourierStatusEnum(status.status),
-        updated_at=status.updated_at,
-        last_online_at=status.last_online_at,
-        cash_balance=status.cash_balance,
+        courier_id=cs.courier_id,
+        status=schemas.CourierStatusEnum(cs.status),
+        transport_mode=cs.transport_mode,
+        updated_at=cs.updated_at,
+        last_online_at=cs.last_online_at,
+        cash_balance=cs.cash_balance,
     )
 
 
@@ -689,15 +692,16 @@ async def get_courier_status_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator, schemas.UserRole.courier)),
 ):
-    status = await services.get_courier_status(db, courier_id)
-    if not status:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Courier status not found")
+    cs = await services.get_courier_status(db, courier_id)
+    if not cs:
+        raise HTTPException(status_code=404, detail="Courier status not found")
     return schemas.CourierStatusRead(
-        courier_id=status.courier_id,
-        status=schemas.CourierStatusEnum(status.status),
-        updated_at=status.updated_at,
-        last_online_at=status.last_online_at,
-        cash_balance=status.cash_balance,
+        courier_id=cs.courier_id,
+        status=schemas.CourierStatusEnum(cs.status),
+        transport_mode=cs.transport_mode,
+        updated_at=cs.updated_at,
+        last_online_at=cs.last_online_at,
+        cash_balance=cs.cash_balance,
     )
 
 
@@ -709,3 +713,177 @@ async def public_tracking_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     return await services.get_order_tracking_data(db, tracking_hash)
+
+
+# ═══════════════════════════════════════════════════════════════
+# SMART DISPATCH
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/dispatch/smart", response_model=schemas.SmartDispatchResponse)
+async def smart_dispatch_endpoint(
+    payload: schemas.SmartDispatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+):
+    return await services.smart_dispatch(db, payload)
+
+
+# ═══════════════════════════════════════════════════════════════
+# PIN AUTO-CORRECTION
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/orders/{order_id}/correct-pin", response_model=schemas.PinCorrectionResponse)
+async def correct_pin_endpoint(
+    order_id: int,
+    payload: schemas.PinCorrectionRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    payload.order_id = order_id
+    return await services.auto_correct_pin(db, payload)
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTO-BATCHING
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/orders/auto-batch", response_model=schemas.AutoBatchResponse)
+async def auto_batch_endpoint(
+    payload: schemas.AutoBatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+):
+    return await services.auto_batch_orders(db, payload)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD & METRICS
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/dashboard/metrics", response_model=schemas.DashboardMetrics)
+async def dashboard_metrics_endpoint(
+    restaurant_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+):
+    return await services.get_dashboard_metrics(db, restaurant_id)
+
+
+@app.get("/dashboard/heatmap", response_model=schemas.LiveHeatmapResponse)
+async def live_heatmap_endpoint(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.admin, schemas.UserRole.restaurant_owner, schemas.UserRole.restaurant_operator)),
+):
+    return await services.get_live_heatmap(db)
+
+
+# ═══════════════════════════════════════════════════════════════
+# THERMAL PROJECTION V2 (with packaging + transport awareness)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/thermal-projection/v2", response_model=schemas.ThermalProjectionResponse)
+async def thermal_projection_v2(
+    initial_temperature: float = Query(...),
+    ambient_temperature: float = Query(20.0),
+    packaging_type: str = Query("standard"),
+    transport_mode: str = Query("pedestrian"),
+    distance_km: float = Query(...),
+):
+    travel_minutes = services._estimate_travel_minutes(distance_km, transport_mode)
+    predicted, risk = services.compute_thermal_decay(
+        initial_temperature, ambient_temperature, packaging_type, travel_minutes,
+    )
+    return schemas.ThermalProjectionResponse(
+        current_temperature=initial_temperature,
+        predicted_temperature=predicted,
+        eta_minutes=round(travel_minutes),
+        risk_level=risk,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# INDOOR TIMING
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/orders/{order_id}/indoor-enter")
+async def mark_indoor_enter(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.courier)),
+):
+    result = await db.execute(select(models.Order).where(models.Order.id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order.indoor_entered_at = datetime.utcnow()
+    await db.commit()
+    return {"status": "indoor_entered", "timestamp": order.indoor_entered_at}
+
+
+@app.post("/orders/{order_id}/indoor-exit")
+async def mark_indoor_exit(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(schemas.UserRole.courier)),
+):
+    result = await db.execute(select(models.Order).where(models.Order.id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order.indoor_exited_at = datetime.utcnow()
+    await db.commit()
+    return {"status": "indoor_exited", "timestamp": order.indoor_exited_at}
+
+
+# ═══════════════════════════════════════════════════════════════
+# WEBSOCKET - Live Tracking
+# ═══════════════════════════════════════════════════════════════
+
+from fastapi import WebSocket, WebSocketDisconnect
+import json
+
+_ws_connections: dict[str, list[WebSocket]] = {}
+
+
+@app.websocket("/ws/tracking/{order_id}")
+async def websocket_order_tracking(websocket: WebSocket, order_id: int):
+    await websocket.accept()
+    key = f"order_{order_id}"
+    if key not in _ws_connections:
+        _ws_connections[key] = []
+    _ws_connections[key].append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        _ws_connections[key].remove(websocket)
+        if not _ws_connections[key]:
+            del _ws_connections[key]
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    await websocket.accept()
+    key = "dashboard"
+    if key not in _ws_connections:
+        _ws_connections[key] = []
+    _ws_connections[key].append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        _ws_connections[key].remove(websocket)
+        if not _ws_connections[key]:
+            del _ws_connections[key]
+
+
+async def broadcast_ws(key: str, data: dict):
+    connections = _ws_connections.get(key, [])
+    dead = []
+    for ws in connections:
+        try:
+            await ws.send_json(data)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        connections.remove(ws)

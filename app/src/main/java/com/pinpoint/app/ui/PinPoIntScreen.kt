@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -51,7 +52,8 @@ fun PinPoIntScreen(
                 onDelivered = onDelivered,
                 onRequestDomofonCode = onRequestDomofonCode,
                 onCopyCode = onCopyCode,
-                onCallClient = onCallClient
+                onCallClient = onCallClient,
+                context = context
             )
         }
     }
@@ -95,7 +97,8 @@ fun DeliveryInfoPanel(
     onDelivered: () -> Unit,
     onRequestDomofonCode: () -> Unit,
     onCopyCode: () -> Unit,
-    onCallClient: () -> Unit
+    onCallClient: () -> Unit,
+    context: android.content.Context
 ) {
     Column(
         modifier = Modifier

@@ -1,0 +1,18 @@
+[
+    {
+        "merged": "com.pinpoint.app-merged_res-83:/drawable_ic_map_pin.xml.flat",
+        "source": "com.pinpoint.app-main-85:/drawable/ic_map_pin.xml"
+    },
+    {
+        "merged": "com.pinpoint.app-merged_res-83:/drawable_ic_copy.xml.flat",
+        "source": "com.pinpoint.app-main-85:/drawable/ic_copy.xml"
+    },
+    {
+        "merged": "com.pinpoint.app-merged_res-83:/drawable_ic_entrance.xml.flat",
+        "source": "com.pinpoint.app-main-85:/drawable/ic_entrance.xml"
+    },
+    {
+        "merged": "com.pinpoint.app-merged_res-83:/drawable_ic_voice.xml.flat",
+        "source": "com.pinpoint.app-main-85:/drawable/ic_voice.xml"
+    }
+]

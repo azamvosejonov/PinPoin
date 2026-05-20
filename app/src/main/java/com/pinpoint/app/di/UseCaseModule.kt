@@ -8,6 +8,7 @@ import com.pinpoint.app.domain.usecase.GenerateThermalRouteAdviceUseCase
 import com.pinpoint.app.domain.usecase.IdentifyEntranceFromTrajectoriesUseCase
 import com.pinpoint.app.domain.usecase.OfflineSyncUseCase
 import com.pinpoint.app.domain.usecase.PredictivePinDropUseCase
+import com.pinpoint.app.data.remote.backend.BackendRemoteDataSource
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,5 +43,7 @@ object UseCaseModule {
 
     @Provides
     @Singleton
-    fun providePredictivePinDropUseCase() = PredictivePinDropUseCase(com.pinpoint.app.data.remote.predictive.PinCorrectionModel())
+    fun providePredictivePinDropUseCase(
+        backendRemoteDataSource: BackendRemoteDataSource
+    ) = PredictivePinDropUseCase(backendRemoteDataSource)
 }

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent">#FFFF6F00</color>
+    <color name="black">#FF000000</color>
+    <color name="error">#FFD32F2F</color>
+    <color name="overlay_bg">#CC000000</color>
+    <color name="primary">#FF1E88E5</color>
+    <color name="primary_dark">#FF1565C0</color>
+    <color name="secondary">#FF43A047</color>
+    <color name="success">#FF2E7D32</color>
+    <color name="temp_cold">#FF0D47A1</color>
+    <color name="temp_cool">#FF1E88E5</color>
+    <color name="temp_hot">#FFD32F2F</color>
+    <color name="temp_warm">#FFFF6F00</color>
+    <color name="warning">#FFFFA000</color>
+    <color name="white">#FFFFFFFF</color>
+    <string name="app_name">PinPoInt</string>
+    <string name="btn_call_client">Mijozga qo\'ng\'iroq</string>
+    <string name="btn_delivered">Yetkazdim ✓</string>
+    <string name="btn_navigate">Navigatsiya</string>
+    <string name="code_correct">Kod to\'g\'ri</string>
+    <string name="code_incorrect">Kod noto\'g\'ri</string>
+    <string name="label_difficulty">Qiyinchilik</string>
+    <string name="label_domofon_code">Domofon kodi</string>
+    <string name="label_entrance">Podyezd</string>
+    <string name="label_eta">Taxminiy vaqt</string>
+    <string name="label_floor">Qavat</string>
+    <string name="label_temperature">Harorat</string>
+    <string name="msg_back_entrance">Podyezdga kirish faqat orqa hovli orqali</string>
+    <string name="msg_food_cooling">Tezroq harakat qiling, taom sovush arafasida!</string>
+    <string name="msg_lift_chip">Diqqat! Ushbu binoda lift faqat chip bilan ishlaydi. Mijozga hoziroq qo\'ng\'iroq qilib, pastga tushishini so\'rang</string>
+    <string name="msg_no_internet">Oflayn rejim: Keshdan ma\'lumot olinmoqda</string>
+    <string name="notification_channel_alerts">Ogohlantirish</string>
+    <string name="notification_channel_location">Joylashuv kuzatuvi</string>
+    <string name="notification_tracking_text">GPS joylashuv kuzatilmoqda...</string>
+    <string name="notification_tracking_title">PinPoInt faol</string>
+    <style name="Theme.PinPoInt" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF1E88E5</item>
+        <item name="colorPrimaryContainer">#FFBBDEFB</item>
+        <item name="colorSecondary">#FF43A047</item>
+        <item name="colorSecondaryContainer">#FFC8E6C9</item>
+        <item name="colorTertiary">#FFFF6F00</item>
+        <item name="colorError">#FFD32F2F</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
