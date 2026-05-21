@@ -1,6 +1,4 @@
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from app.core.database import engine, Base
 from app.api.v1.router import api_router
@@ -19,7 +17,35 @@ import app.models.visitor
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Birinchi admin yaratish
+    await _create_default_admin()
     yield
+
+async def _create_default_admin():
+    from app.core.config import settings
+    from app.core.security import hash_password
+    from app.models.user import User, UserRole
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+
+    if not settings.ADMIN_PHONE or not settings.ADMIN_PASSWORD:
+        return
+
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(User).where(User.role == UserRole.admin))
+        if existing.scalar_one_or_none():
+            return  # Admin allaqachon bor
+
+        admin = User(
+            full_name="Admin",
+            phone=settings.ADMIN_PHONE,
+            email=settings.ADMIN_EMAIL or None,
+            hashed_password=hash_password(settings.ADMIN_PASSWORD),
+            role=UserRole.admin,
+        )
+        db.add(admin)
+        await db.commit()
+        print(f"✓ Admin yaratildi: {settings.ADMIN_PHONE}")
 
 app = FastAPI(
     title="PinPoint API",
@@ -31,14 +57,6 @@ app = FastAPI(
 app.include_router(api_router)
 app.include_router(tracking_router)  # /track/{token} — HTML sahifa
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
 @app.get("/")
 async def root():
     return {"message": "PinPoint API ishlamoqda 🚀"}
-
-@app.get("/guest")
-async def guest_page():
-    """Mehmon sahifasi - faslga qarab o'zgaruvchan dizayn"""
-    return FileResponse("static/guest/index.html")

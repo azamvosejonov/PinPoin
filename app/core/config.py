@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     GROQ_API_KEY: str
     BASE_URL: str = "http://localhost:8000"
+    # Birinchi admin (deploy vaqtida avtomatik yaratiladi)
+    ADMIN_EMAIL: str = ""
+    ADMIN_PHONE: str = ""
+    ADMIN_PASSWORD: str = ""
     # Kvartira kodi shifrlash uchun (32 bayt hex)
     ENCRYPTION_KEY: str = "0" * 64
     # Rate limit

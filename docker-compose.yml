@@ -9,8 +9,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:-password}@db:5432/pinpoint
       REDIS_URL: redis://redis:6379
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -31,7 +33,8 @@ services:
       BASE_URL: http://localhost:8000
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     profiles:
       - test
 
@@ -45,9 +48,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -57,14 +60,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --save "" --appendonly no
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
 volumes:
