@@ -70,6 +70,14 @@ def _build(token, order, restaurant, food_names, temp_warning, base_url):
     }
     emoji, slabel, scolor, sbg = ST.get(order.status, ("📦", order.status, "#6366f1", "rgba(99,102,241,0.15)"))
 
+    temp_block = ""
+    if temp_warning:
+        temp_block = '<div class="temp"><div class="temp-em">\U0001f321\ufe0f</div><div><div class="temp-t">Issiq ovqat \u2014 tez yetkazilishi kerak</div><div class="temp-s">Ovqat sovib qolmasligi uchun kuryer tezlashtirilgan</div></div><div class="temp-badge">ISSIQ</div></div>'
+
+    food_block = ""
+    if food_str:
+        food_block = f'<div class="food"><div class="food-em">\U0001f37d</div><div class="food-t">{food_str}</div></div>'
+
     return f"""<!DOCTYPE html>
 <html lang="uz">
 <head>
@@ -305,18 +313,10 @@ html,body{{width:100%;height:100%;overflow:hidden;font-family:'Inter',sans-serif
   </div>
 
   <!-- Temp warning -->
-  {"" if not temp_warning else """
-  <div class="temp">
-    <div class="temp-em">🌡️</div>
-    <div>
-      <div class="temp-t">Issiq ovqat — tez yetkazilishi kerak</div>
-      <div class="temp-s">Ovqat sovib qolmasligi uchun kuryer tezlashtirilgan</div>
-    </div>
-    <div class="temp-badge">ISSIQ</div>
-  </div>"""}
+  {temp_block}
 
   <!-- Food -->
-  {"" if not food_str else f'<div class="food"><div class="food-em">🍽</div><div class="food-t">{food_str}</div></div>'}
+  {food_block}
 
 </div>
 
